@@ -1,0 +1,17 @@
+#!/bin/sh 
+
+# Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+
+dbsvc_iface_init_suse()
+#######################
+{
+    . "${DBSVC_DIR}/dbsvc_scripts/dbsvc_iface_lsb"
+    dbsvc_iface_init_lsb
+    RUNLEVEL="35"
+}
+
+dbsvc_iface_exec_suse()
+#######################
+{
+    dbsvc_iface_exec_lsb "$@"
+}

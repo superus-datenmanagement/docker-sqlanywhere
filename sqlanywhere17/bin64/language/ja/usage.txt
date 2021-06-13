@@ -1,0 +1,51 @@
+# ***************************************************************************
+# Copyright (c) 2019 SAP SE or an SAP affiliate company.All rights reserved.
+# ***************************************************************************
+SQL Anywhere サービスユーティリティ $(get_full_version)
+使用法: dbsvc [オプション] -d <svc>             サービスの削除
+   または  dbsvc [オプション] -g <svc>             サービスの詳細の取得
+   または  dbsvc [オプション] -x <svc>             サービスの停止
+   または  dbsvc [オプション] -u <svc>             サービスの開始
+   または  dbsvc [オプション] -status <svc>        サービスのステータスの取得
+   または  dbsvc [オプション] -l                   すべての SQL Anywhere サービスの表示
+   または  dbsvc [オプション] -lt                  すべての SQL Anywhere サービスタイプの表示
+   または  dbsvc [オプション] -li                  すべてのサービスインタフェースの表示
+   または  dbsvc [オプション] [作成オプション] -w <svc> <詳細>
+                                            サービスの作成
+
+オプション
+	-cm		サービス作成コマンドを表示します (-g または -l を使用)
+        -q              バナーを出力しません
+        -y              確認なしでサービスを削除または上書きします
+        -i <interface>  使用する初期インタフェース (使用可能な場合はデフォルト systemd、
+                        それ以外の場合は lsb)
+                        $(display_list -a 24 SVC_IFACE_LIST[@])
+作成オプション
+        -a <acct>       使用するアカウント名
+        -as             デーモンアカウントを使用
+        -pr <level>     ナイスレベルを使用
+        -rs <deps>      サービス依存性
+	-od <ODBCINI>   Mobile Link、DBMLSync および DBRemote 
+			の各サービスに次の ODBCINI ファイルを使用
+        -s <startup>     起動オプション (デフォルトは Manual)
+                        Automatic、Manual
+        -rl <RUNLEVEL>  サービスの RUNLEVEL (lsb の場合はデフォルト 235、
+                        systemd の場合は multi-user.target)
+        -t <type>       サービスのタイプ (デフォルトは Personal)
+                        $(display_list -a 24 SVC_T_DISPLAY[@])
+
+詳細: 実行プログラムオプション
+	 実行プログラムオプションは、サービスのタイプに適用できる引数です。
+	 実行プログラムが指定されていない場合は、現在の環境が使用されます。
+	 次は、Network サービスの例です。
+
+	 dbsvc -as -t Network -w my_svc /opt/sqlanywhere$(get_major_version)/demo.db -n foo
+
+                  -w を使用する場合は、-a または -as のいずれかが必要です。
+
+注:	Mobile Link、DBRemote、DBMLsync をサービスとして実行するには、
+	-o または -ot オプションが必要です。
+
+                  ユーザの
+ホームディレクトリまたは -od オプション経由による Mobile Link サービスのための ODBC 環境を設定する必要があります。
+

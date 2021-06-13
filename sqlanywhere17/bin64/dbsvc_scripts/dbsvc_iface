@@ -1,0 +1,64 @@
+#!/bin/sh 
+
+# Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+
+dbsvc_iface_init()
+##################
+{
+    [ -z "$PRIORITY" ] && PRIORITY="+00"
+    [ -z "$STARTUP" ] && STARTUP="Manual"
+
+    SVC_IFACE_LIST=()
+    for file in "${DBSVC_DIR}/dbsvc_scripts/dbsvc_iface_"*; do
+        local iface=$(echo "$file" | sed "s/.*dbsvc_iface_\(.*\)/\1/")
+        [ -n "$iface" ] && . "$file" && exists "dbsvc_iface_init_${iface}" && exists "dbsvc_iface_available_${iface}" && "dbsvc_iface_available_${iface}" && SVC_IFACE_LIST+=("$iface")
+    done
+
+    # we need something to use, so let's go with lsb if nothing else is
+    # available -- we will give an error later
+    [ -z "${SVC_IFACE_LIST:-}" ] && SVC_IFACE_LIST=lsb
+}
+
+dbsvc_iface_select_default()
+############################
+{
+    local priority=
+    SVC_IFACE=
+    for iface in "${SVC_IFACE_LIST[@]}"; do
+        local iface_priority
+        [ -z $SVC_IFACE ] && SVC_IFACE="$iface" && priority=1000
+        exists "dbsvc_iface_priority_${iface}" && iface_priority=$("dbsvc_iface_priority_${iface}")
+        [ -n "${iface_priority:-}" ] && [ "$iface_priority" -lt "$priority" ] && SVC_IFACE="$iface" && priority="${iface_priority}"
+    done
+}
+
+dbsvc_iface_select()
+####################
+# $1 specifies which interface to use
+{
+    SVC_IFACE="$1"
+    exists "dbsvc_iface_select_${SVC_IFACE}" && "dbsvc_iface_select_${SVC_IFACE}"
+    exists "dbsvc_iface_init_${SVC_IFACE}" && "dbsvc_iface_init_${SVC_IFACE}"
+}
+
+dbsvc_iface_exec()
+##################
+# $1 specifies which action to run
+{
+    [ -z "${SVC_IFACE:-}" ] && output_fatal_error "${ERR_NOIFACE}"
+    if exists "dbsvc_iface_${1}_${SVC_IFACE}"; then
+        "dbsvc_iface_${1}_${SVC_IFACE}"
+    elif exists "dbsvc_iface_${1}"; then
+        "dbsvc_iface_${1}"
+    else
+        "dbsvc_iface_exec_${SVC_IFACE}" "$1"
+    fi
+}
+
+dbsvc_iface_commands()
+######################
+# $1 specifies which interface commands to list
+{
+    [ -z "${SVC_IFACE:-}" ] && output_fatal_error "${ERR_NOIFACE}"
+    exists "dbsvc_iface_commands_${SVC_IFACE}" && "dbsvc_iface_commands_${SVC_IFACE}"
+}

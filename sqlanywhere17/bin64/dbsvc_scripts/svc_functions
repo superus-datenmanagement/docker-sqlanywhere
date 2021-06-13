@@ -1,0 +1,178 @@
+#!/bin/sh 
+
+# Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+#
+# provide common operations for the service types
+
+
+svc_t_iface_init()
+##################
+{
+    SVC_T_LIST=()
+    SVC_T_DISPLAY=()
+    for file in "${DBSVC_DIR}/dbsvc_scripts/svc_t_"*; do
+        local iface=$(echo "$file" | sed "s/.*svc_t_\(.*\)/\1/")
+        if [ -n "$iface" ]; then
+            SVC_T_LIST+=("$iface")
+            SVC_T_DISPLAY+=( $(. "$file" && svc_t_displayname) )
+        fi       
+    done
+
+    eval SVC_T_DISPLAY=($(printf "%q\n" "${SVC_T_DISPLAY[@]}" | sort -u))
+}
+
+
+svc_t_iface_load()
+##################
+# get interface to tool 
+# Allow $1 to fall back on global variable DBSVC_TYPE
+{
+    local svc_tool_iface
+    local iface_file
+
+    if [ -n "$1" ]; then
+	svc_tool_iface=$(tolower "$1")
+    else
+	svc_tool_iface=$(tolower "${DBSVC_TYPE}")
+    fi
+    
+    for file in "${DBSVC_DIR}/dbsvc_scripts/svc_t_"*; do
+        local iface=$(echo "$file" | sed "s/.*svc_t_\(.*\)/\1/")
+        iface=$(tolower "$iface")
+        if [ -n "$iface" ] && [ "$svc_tool_iface" = "$iface" ]; then
+            iface_file="${file}"
+            break
+        fi
+    done
+    
+    if [ -n "${iface_file}" ]; then
+        . "${iface_file}" || output_usage_error "${ERR_INVALIDTYPE}"
+    else
+        output_usage_error "${ERR_INVALIDTYPE}"
+    fi
+}
+
+svc_t_iface_select()
+####################
+# $1 : DBSVC_TYPE
+{
+    svc_t_iface_load $1
+    svc_t_init
+}
+
+# Multiple instances of our tools may be running as services.
+# Need to take into account the command line given to each tool, 
+# to find the right one.
+# The following finds the pid of the process with the command line that 
+# matches the one we are looking for.
+# Returns:
+# sets PROCID and echoes back the pid of the process
+svc_t_getpid()
+##############
+{
+    # get our command line and "hash" it into something that
+    # matches the format of the commandline in /proc/<pid>/cmdline,
+    # with grep-unfriendly characters removed
+    local pcmdline
+    local CMD=$(svc_t_toolpath)
+    local TCMD=$(eval echo "$SVC_TOOL_CMDLINE" | sed 's/ /\x00/g' | sed 's/-//g' | sed 's/\"//g')
+    local CMDREAL=$(readlink -m -s "${CMD}" | sed 's/ (deleted)//')
+    local pid=$PROCID
+    PROCID=
+    if [ ! -z "$pid" ]; then
+	# maybe we're here a second time ... check last time's PID       
+	PRFILE="/proc/"$pid"/cmdline"
+	EXEFILE="/proc/"$pid"/exe"
+	EXEREAL=$(readlink -m -s "${EXEFILE}" 2>/dev/null | sed 's/ (deleted)//')
+	if [ -r $PRFILE ] && [ "${EXEREAL}" = "${CMDREAL}" ]; then
+	    pcmdline=$(cat $PRFILE | sed 's/-//g' | sed 's/ //g')
+	    RET=$(echo $pcmdline | grep "$TCMD" 2>/dev/null)
+	    if [ "$RET" != "" ]; then
+		PROCID=$pid
+	    fi
+	fi
+    fi
+    if [ "$PROCID" = "" ] && [ "$PIDFILEN" != "" ]; then
+      # check the pid specified in the PIDFILE first to see if we have a match
+      if [ -f "$PIDFILEN" ]; then
+        pid=$(cat "$PIDFILEN")
+	PRFILE="/proc/"$pid"/cmdline"
+	EXEFILE="/proc/"$pid"/exe"
+	EXEREAL=$(readlink -m -s "${EXEFILE}" 2>/dev/null | sed 's/ (deleted)//')
+	if [ -r $PRFILE ] && [ "${EXEREAL}" = "${CMDREAL}" ]; then
+	    pcmdline=$(cat $PRFILE | sed 's/-//g' | sed 's/ //g')
+	    RET=$(echo $pcmdline | grep "$TCMD" 2>/dev/null)
+	    if [ "$RET" != "" ]; then
+		PROCID=$pid
+	    fi
+	fi
+      fi
+    fi
+    if [ "$PROCID" = "" ]; then
+      # need to do it the hard way - check all of the /proc/.../ directories
+      for pid in $(ps ax | awk '{print $1}'); do
+	PRFILE="/proc/"$pid"/cmdline"
+	EXEFILE="/proc/"$pid"/exe"
+	EXEREAL=$(readlink -m -s "${EXEFILE}" 2>/dev/null | sed 's/ (deleted)//')
+	if [ -r $PRFILE ] && [ "${EXEREAL}" = "${CMDREAL}" ]; then
+	    pcmdline=$(cat $PRFILE | sed 's/-//g' | sed 's/ //g')
+	    RET=$(echo $pcmdline | grep "$TCMD" 2>/dev/null)
+	    if [ "$RET" != "" ]; then
+		PROCID=$pid
+                break
+	    fi
+	fi
+      done
+    fi
+    echo $PROCID
+}
+
+svc_t_process_cmdline_add_ud()
+##############################
+# in: name of an output array variable in which to put the command line
+# in: command line arguments
+# out: store command line as array in variable provided 
+# out: add -ud if not already there
+{
+    local OUTPUT="${1:-MY_CMDLINE}"
+
+    shift
+
+    eval $OUTPUT=\(\"\${@}\"\)
+
+    if not contains "-ud" "${@}"; then
+        eval $OUTPUT+=\("-ud"\)
+    fi
+}
+
+svc_t_status()
+##############
+# Most tools check status by verifying the process is still running
+{
+    local procid=$(svc_t_getpid)
+
+    if [ -z "$procid" ]; then
+	false
+    else
+	true
+    fi
+    echo $?
+}
+
+svc_t_stopcmd()
+###############
+# Most tools stop by sending a HUP signal
+{
+    local procid=$(svc_t_getpid)
+    [ -n "${procid}" ] && kill -HUP "${procid}"
+}
+
+svc_t_checkbinary()
+###################
+{
+    # some validation
+    [ ! -r "$(svc_t_toolpath)" ] && output_msg "${INF_BINARYNOTFOUND}" # ${DBSVC_TYPE}
+}
+
+
+

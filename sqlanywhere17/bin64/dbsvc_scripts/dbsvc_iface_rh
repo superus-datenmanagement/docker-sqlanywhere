@@ -1,0 +1,28 @@
+#!/bin/sh 
+
+# Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+
+dbsvc_iface_init_rh()
+#####################
+{
+    . "${DBSVC_DIR}/dbsvc_scripts/dbsvc_iface_lsb"
+    dbsvc_iface_init_lsb
+
+    local lsb_prefix
+    lsb_prefix=
+    [ -r /etc/asianux-lsb ] && lsb_prefix=/etc/asianux-lsb/
+    [ -r /etc/redhat-lsb ] && lsb_prefix=/etc/redhat-lsb/
+
+    START_DAEMON="${lsb_prefix}lsb_start_daemon"
+
+    LOG_SUCCESS_MSG="${lsb_prefix}lsb_log_message success"
+    LOG_FAILURE_MSG="${lsb_prefix}lsb_log_message failure"
+    LOG_WARNING_MSG="${lsb_prefix}lsb_log_message warning"
+}
+
+dbsvc_iface_exec_rh()
+#####################
+{
+    dbsvc_iface_exec_lsb "$@"
+}
+

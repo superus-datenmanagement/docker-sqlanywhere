@@ -1,0 +1,51 @@
+# ***************************************************************************
+# Copyright (c) 2019 SAP SE ou société affiliée SAP. Tous droits réservés.
+# ***************************************************************************
+SQL Anywhere - Utilitaire de services $(get_full_version)
+Syntaxe : dbsvc [options] -d <svc>             supprimer un service
+   ou  dbsvc [options] -g <svc>             obtenir des détails sur un service
+   ou  dbsvc [options] -x <svc>             arrêter un service
+   ou  dbsvc [options] -u <svc>             démarrer un service
+   ou  dbsvc [options] -status <svc>        obtenir l'état d'un service
+   ou  dbsvc [options] -l                   répertorier tous les services SQL Anywhere
+   ou  dbsvc [options] -lt                  répertorier tous les types de services SQL Anywhere
+   ou  dbsvc [options] -li                  répertorier toutes les interfaces de services
+   ou  dbsvc [options] [options de création] -w <svc> <détails>
+                                         créer un service
+
+Options
+	-cm		afficher la commande de création de service (avec -g ou -l)
+        -q              ne pas afficher la bannière
+        -y              supprimer ou remplacer un service sans confirmation
+        -i <interface>  interface init à utiliser (systemd par défaut si dispo,
+                        sinon lsb)
+                        $(display_list -a 24 SVC_IFACE_LIST[@])
+Options de création
+        -a <cpt>       nom du compte à utiliser
+        -as             utiliser compte démon
+        -pr <niv>   utiliser le niveau adéquat
+        -rs <déps>      dépendances de services
+	-od <ODBCINI>   utiliser le fichier ODBCINI suivant pour les services
+			MobiLink, DBMLSync et DBRemote
+        -s <démar>    option de démarrage (Manual par défaut)
+                        Automatic, Manual
+        -rl <RUNLEVEL>  RUNLEVEL du service (par défaut 235 pour lsb,
+                        multi-user.target pour systemd)
+        -t <type>       type de service (par défaut Personal)
+                        $(display_list -a 24 SVC_T_DISPLAY[@])
+
+Détails : options_exécutables
+	 les options exécutables sont des arguments applicables à ce type de service.
+	 En l'absence d'exécutable, l'environnement en cours est utilisé.
+	 Voici un exemple de service Network
+
+	 dbsvc -as -t Network -w mon_svc /opt/sqlanywhere$(get_major_version)/demo.db -n toto
+
+         Il faut spécifier -a ou -as lorsque -w est utilisé.
+
+Remarques :	 MobiLink, DBRemote et DBMLsync nécessitent l'option -ot ou -o
+	 pour s'exécuter comme des services
+
+         L'environnement ODBC doit être paramétré pour les services MobiLink au moyen
+         du répertoire de base de l'utilisateur ou de l'option -od
+

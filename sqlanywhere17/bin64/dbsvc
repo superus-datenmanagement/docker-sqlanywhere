@@ -1,0 +1,673 @@
+#!/bin/bash
+
+# In case we are being run by a service, set some stock paths
+PATH="/bin:/sbin:/usr/bin:/usr/sbin:/opt/usr/bin:/opt/usr/sbin:/usr/local/bin:/usr/local/sbin:$PATH"
+
+# Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+
+get_major_version()
+###################
+{
+    echo "17"
+}
+
+get_minor_version()
+###################
+{
+    echo "0"
+}
+
+get_patch_version()
+###################
+{
+    echo "10"
+}
+
+get_build_version()
+###################
+{
+    echo "6127"
+}
+
+get_full_version()
+##################
+{
+    echo "17.0.10.6127"
+}
+
+get_version()
+#############
+{
+    echo "$(get_major_version)$(get_minor_version)$(get_patch_version)"
+}
+
+get_lang_code()
+###############
+{
+    if [ "$LANG" != "" ]; then
+	LANGCODE=$(echo $LANG | awk -F"_" '{print $1}')
+    else
+	LANGCODE="en"
+    fi
+
+    echo $LANGCODE
+}
+
+get_res_charset_code()
+######################
+{
+    echo $RESCHARSET
+}
+
+get_os_charset_code()
+#####################
+{
+    if [ "$LANG" != "" ]; then
+	CHARSET=$(echo $LANG | awk -F"." '{print $2}')
+    fi
+    if [ "$CHARSET" = "" ]; then
+        CHARSET="LATIN1"
+    fi
+
+    echo $CHARSET
+}
+
+create_new_tmpfile()
+####################
+# PRE : none
+# POST: new empty file $TMPFILE created.
+{
+    TMPPREFIX="/tmp/SqlAny_dbsvc."
+
+    if [ "_$TMPFILE" != "_" ] && [ -f "$TMPFILE" ]; then
+        rm -f "$TMPFILE"
+    fi
+
+    TMPFILE="${TMPPREFIX}$$"
+
+    touch "$TMPFILE"
+}
+
+get_bitness()
+#############
+# called only when in "utility" mode
+{
+    pushd "${SCRIPTDIR}" >/dev/null
+
+    BIN=$(echo "$PWD" | awk -F bin32 '{ print $1 }' | grep bin64)
+
+    if [ $? -eq 0 ]; then
+	echo "64"
+    else
+	echo "32"
+    fi
+
+    popd >/dev/null
+}
+
+opposite_bitness()
+##################
+{
+    if [ "${1:-}" = "32" ]; then
+	echo 64
+    elif [ "${1:-}" = "64" ]; then
+	echo 32
+    else
+	echo ""
+    fi
+}
+
+load_language_file()
+####################
+{
+    # something to fall back on
+    . "${DBSVC_DIR}/language/en/messages.txt"
+
+    local lc
+    lc=$(get_lang_code)
+
+    case $lc in
+        "ja" )
+           ;;
+        "zh" )
+           ;;
+        "de" )
+           ;;
+        * )
+           lc="en"
+           ;;
+    esac
+    
+    RESCHARSET="UTF8"
+
+    if [ "$LANGCODE" != "en" ]; then
+	create_new_tmpfile
+	if [ -r "${DBSVC_DIR}/language/$lc/messages.txt" ]; then
+	    iconv -f $RESCHARSET -t $(get_os_charset_code) "${DBSVC_DIR}/language/$lc/messages.txt" > "$TMPFILE" 2>/dev/null
+	fi
+	# Only override usage if we were able to convert to their charset; otherwise fall back on english
+	[ $? -eq 0 ] && . "$TMPFILE"
+    fi
+    rm -f "$TMPFILE"
+}
+
+get_abspath()
+#############
+{
+    # assumes a path to a file is passed in
+
+    # the following construct preserves newlines at the end of names
+    local dir=$(dirname "$2" ; echo x) ; dir=${dir%??}
+    local file=$(basename "$2" ; echo x) ; file=${file%??}
+
+    pushd "$dir" >/dev/null && dir=$(pwd) && popd >/dev/null
+
+    eval "$1=\"\$dir/\$file\""
+}
+
+get_homedir()
+#############
+{
+    eval "$1=~$2";
+}
+
+
+init()
+######
+# initialization that is common for both modes of operation:
+# "svc" mode and "utility" mode
+{
+    SVCNAME_PFX="SA_"
+    VERSION=$(get_major_version)
+
+    get_abspath SCRIPT "$0"
+
+    # Need to use BASH_SOURCE to find dbsvc in case we are starting
+    # the service using the generated init.d script
+    SCRIPTDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+    SCRIPTPARENTDIR=$(dirname "$SCRIPTDIR" ; echo x)
+    SCRIPTPARENTDIR="${SCRIPTPARENTDIR%??}"
+
+    if [ -z "${SQLANYDIR:-}" ]; then
+        SQLANYDIR="$SQLANY17"
+    fi
+    if [ -z "${SQLANYDIR:-}" ]; then
+	# fall back on canonical SQL Anywhere directory structure
+	SQLANYDIR="$SCRIPTPARENTDIR"
+    fi
+}
+
+init_utility()
+##############
+{
+    # figure out bitness
+    BITNESS=$(get_bitness)
+    BIN=bin${BITNESS}
+    OBIN=bin$(opposite_bitness ${BITNESS})
+
+    DBSVC_DIR="$SQLANYDIR/$BIN"
+    if [ ! -d "${DBSVC_DIR}/dbsvc_scripts" ]; then
+	DBSVC_DIR="$SQLANYDIR/$OBIN"
+    fi 
+    BIN32=bin32
+    BIN64=bin64
+
+    QUIET=0
+    AUTOYES=0
+    LISTCMD=FALSE
+
+    DBSVC_TYPE="Personal"
+}
+
+init_svc()
+##########
+{
+    # figure out bitness
+    BITNESS=$(get_bitness)
+    BITNESS=${BITNESS:-64}
+    BIN=bin${BITNESS}
+    OBIN=bin$(opposite_bitness ${BITNESS})
+
+    DBSVC_DIR="$SQLANYDIR/$BIN"
+    if [ ! -d "${DBSVC_DIR}/dbsvc_scripts" ]; then
+	DBSVC_DIR="$SQLANYDIR/$OBIN"
+    fi 
+    BIN32=bin32
+    BIN64=bin64
+
+    QUIET=1
+}
+
+display_list()
+##############
+{
+    if [ "${1}" = "-a" ]; then
+        shift
+        local align="${1}"
+        shift
+    fi
+
+    declare -a list=("${!1}")
+    local out=$(printf ", %s" "${list[@]}" | cut -b 3-)
+
+    if exists fmt ; then
+        cols=80
+        if exists tput; then
+            cols=$(tput cols)
+        fi
+        cols=$(expr "${cols}" - "${align:-0}")
+        printf '%s' "${out}" | fmt -w "${cols}" -t | sed "s/^\s\+/$(printf '%*c' "${align:-0}" ' ' )/"
+        
+    else
+        printf '%s' "${out}"
+    fi
+    
+}
+
+usage()
+#######
+{
+    local lc
+    lc=$(get_lang_code)
+    
+    create_new_tmpfile
+    if [ -r "${DBSVC_DIR}/language/$lc/usage.txt" ]; then
+        iconv -f $(get_res_charset_code) -t $(get_os_charset_code) "${DBSVC_DIR}/language/$lc/usage.txt"  > "$TMPFILE" 2>/dev/null
+	# Only override usage if we were able to convert to their charset; otherwise fall back on english
+	[ $? -ne 0 ] && cat "${DBSVC_DIR}/language/en/usage.txt" > "$TMPFILE"
+    else
+	cat "${DBSVC_DIR}/language/en/usage.txt" > "$TMPFILE"
+    fi
+
+    eval echo "\"$(cat <<EOF
+$(<${TMPFILE})
+EOF
+)\"" 
+    rm -f "$TMPFILE"
+    
+    [ "F$1" = "F-?" ] && exit 0
+    exit 1
+}
+
+echobanner() 
+############
+{
+    [ ${QUIET:-0} -ne 0 ] && return ;
+
+    output_msg "$BANNER $(get_full_version)"
+}
+
+resolve_pidfilen()
+##################
+{
+    # compute pid file name to be used based on defined PIDFILE value
+    if [ "$PIDFILE" = ".use.default." ]; then
+	PIDFILEN="/run/${SVCNAME_PFX}$(escape "${SERVICENAME}")/service.pid"
+    else
+	PIDFILEN="$PIDFILE"
+    fi
+}
+
+parse_cl_options()
+##################
+{
+    if [ "F$1" = "F-?" ]; then
+	usage $1
+    fi
+    PIDFILE=${PIDFILE:-.use.default.}
+    INPUTCMD=("$@")
+    DEP_SERVICES=()
+    DONE=0
+    while [ $DONE -eq 0 ] && [ ! -z "$1" ]; do
+	case $1 in
+	    #
+	    # Modifier options
+	    #
+
+	    # quiet mode
+	    -q | -quiet )
+		QUIET=1
+		;;
+	    # display creation command
+	    -cm )
+		LISTCMD=TRUE
+		;;
+	    # automatically answer "yes" to overwrites/delete
+	    -y )
+		AUTOYES=1
+		;;
+
+	    #
+	    # Major options
+	    #
+
+	    # delete service
+	    -delete | -d )
+		shift
+		SERVICENAME="$1"
+		ACTION=delete
+		DONE=1
+
+		# validation
+		if [ "$SERVICENAME" = "" ]; then
+			output_usage_error "${ERR_NOSERVICENAME}"
+		fi
+		;;
+
+	# print details on a service
+	-details | -g )
+	    shift
+	    SERVICENAME="$1"
+	    ACTION=detail
+	    DONE=1
+
+	    # validation
+	    if [ "$SERVICENAME" = "" ]; then
+		output_usage_error "${ERR_NOSERVICENAME}"
+	    fi
+	    ;;
+
+	# directory of services
+	-list | -l )
+	    ACTION=list
+	    ;;
+
+        # list service interfaces
+        -list-interfaces | -li )
+            echobanner
+            printf '%s\n' "${SVC_IFACE_LIST[@]}"
+            exit 0
+            ;;
+        
+        # list service interfaces
+        -list-types | -lt )
+            echobanner
+            printf '%s\n' "${SVC_T_LIST[@]}"
+            exit 0
+            ;;
+
+	# create a service
+	-w | -write )
+	    shift
+	    SERVICENAME="$1"
+	    ACTION=create
+	    DONE=1
+
+	    # validation
+	    if [ "$SERVICENAME" = "" ]; then
+		output_usage_error "${ERR_NOSERVICENAME}"
+	    fi
+	    if [ "$ACCOUNT" = "" ]; then 
+		    output_usage_error "${ERR_NOACCOUNT}"
+	    fi 
+	    if [[ "$SERVICENAME" = $'-'* ]]; then
+		    output_msg "${INF_WARNSVCWITHDASH}"
+	    fi
+
+	    shift
+	    SVC_DETAILS=("$@")
+	    ;;
+
+	#Start SQL Anywhere Service
+	-u  | -start | start)
+	    shift
+	    SERVICENAME="$1"
+	    ACTION=start
+	    DONE=1
+
+	    # validation
+	    [ -z "$SERVICENAME" ] && [ -z "$SVC_TOOL_CMDLINE" ] && output_usage_error "${ERR_NOSERVICENAME}"
+	    ;;
+	
+	# Stop SQL Anywhere Service
+	-x | -stop | stop )
+	    shift
+	    SERVICENAME="$1"
+	    ACTION=stop
+	    DONE=1
+
+	    # validation
+	    [ -z "$SERVICENAME" ] && [ -z "$SVC_TOOL_CMDLINE" ] && output_usage_error "${ERR_NOSERVICENAME}"
+	    ;;
+
+	# status of Service
+	-status | status )
+	    shift
+	    SERVICENAME="$1"
+	    ACTION=status
+	    DONE=1
+
+	    # validation
+	    [ -z "$SERVICENAME" ] && [ -z "$SVC_TOOL_CMDLINE" ] && output_usage_error "${ERR_NOSERVICENAME}"
+	    ;;
+
+        -restart | restart)
+	    shift
+	    SERVICENAME="$1"
+	    ACTION=restart
+	    DONE=1
+
+	    # validation
+	    [ -z "$SERVICENAME" ] && [ -z "$SVC_TOOL_CMDLINE" ] && output_usage_error "${ERR_NOSERVICENAME}"
+	    ;;
+	
+	# disable service
+	-disable | disable )
+	    shift
+	    SERVICENAME="$1"
+	    ACTION=disable
+	    DONE=1
+
+	    # validation
+	    [ -z "$SERVICENAME" ] && output_usage_error "${ERR_NOSERVICENAME}"
+	    ;;
+
+	# enable service
+	-enable | enable )
+	    shift
+	    SERVICENAME="$1"
+	    ACTION=enable
+	    DONE=1
+
+	    # validation
+	    [ -z "$SERVICENAME" ] && output_usage_error "${ERR_NOSERVICENAME}"
+	    ;;
+
+	#
+	#  Creation options
+	#
+
+	#  local daemon account
+	-as )
+	    ACCOUNT="daemon"
+	    ;;
+				
+	#  Run service as user account
+	#  Groups may not make sense here daemon does not seem to support it.
+	-a | -account )
+	    shift
+	    ACCOUNT="$1"
+
+	    # validation
+	    id -u "$ACCOUNT" >/dev/null 2>&1 || output_msg "${INF_NOUSER}"
+	    ;;
+
+	#  Startup Type  "Disabled does not make sense here"
+	# Currently not documented but is in the usage message
+	-startup | -s )
+	    shift
+	    case $(tolower "$1") in
+		auto | automatic )
+		    STARTUP="Automatic"
+		    ;;
+		man | manual )
+		    STARTUP="Manual"
+		    ;;
+		* )
+		    output_usage_error "${ERR_INVALIDSTARTUP}"
+		    ;;
+	    esac
+	    ;;
+
+	# type could be anything in ${SVC_T_LIST[@]}
+	-t | -type )
+	    shift
+            DBSVC_TYPE="$(tolower "$1")"
+            ;;
+	#
+	# Linux-specific options
+	#
+
+	#Set nice priority of service 
+	-pr | -priority )
+	    shift
+	    PRIORITY="$1"
+	    ;;
+
+	#ODBCINI specification
+	-od | -odbcini )
+	    shift
+	    ODINI="$1"
+	    ;;
+
+	# Specify run level for service upon start up.
+	-rl | -runlevel )
+	    shift
+	    RUNLEVEL="$1"
+	    ;;
+
+	#  set dependencies 
+	# "$DEP_SERVICES" is echoed out in the Required-Start line 
+	# NOTE: must specify 1 dependent service per -rs switch (not a list)
+	-rs )
+	    shift
+            [ -z "$1" ] && output_usage_error "${ERR_NOSERVICENAME}"
+	    DEP_SERVICES+=("$1")
+	    ;;
+
+	# pidfile specification
+	-pf | -pidfile )
+	    PIDFILE=.use.default.
+	    ;;
+
+	-pfn | -pidfilename )
+	    shift
+	    PIDFILE="$1"
+	    ;;
+
+	-pf- | -pidfile- )
+	    PIDFILE=
+	    ;;
+
+	# service interface specification 
+	-i | -interface  )
+	    shift
+            SVC_IFACE="$1"
+            ;;
+	# All else is an error
+	* )
+	    echo "${ERR_UNRECOGNIZED_OPTION}" "$1"
+	    usage
+	    ;;
+
+	esac
+
+    shift
+
+    done
+
+    # some validation of ODINI here, now that we know $ACCOUNT too
+    if [ "$ACTION" = "create" ]; then
+	# check if a DSN was specified in the command
+	if [ -n "$(printf -- '%s ' "${INPUTCMD[@]}" | grep -i "dsn=")" ]; then
+	    if [ -z "$ODINI" ]; then
+		get_homedir ODINI "$ACCOUNT"
+                ODINI="$ODINI/.odbc.ini"
+	    fi
+	    [ ! -r "$ODINI" ] && output_msg "${INF_NOODBCINIEXIST}"
+	fi
+    fi
+
+    resolve_pidfilen
+}
+
+# 
+# 
+# mainline
+# 
+# 
+
+# Determine whether we are being called from a service script ("svc" mode)
+# or whether we are being run to manage services ("utility" mode)
+init
+if [ "$1" = "RUNSERVICECMD" ]; then
+    MODE=svc
+    shift
+    resolve_pidfilen
+else
+    MODE=utility
+fi
+init_${MODE}  
+
+# validate that we found the SQLANYDIR; otherwise, we can't load our language
+# resources, scripts, etc.
+if [ -z "$SQLANYDIR" ]; then
+    echo "Error: SQL Anywhere environment \$SQLANY17 not set."
+    exit 1
+fi
+
+. "${DBSVC_DIR}/dbsvc_scripts/distro.sh"
+. "${DBSVC_DIR}/dbsvc_scripts/utility.sh"
+. "${DBSVC_DIR}/dbsvc_scripts/dbsvc_iface"
+. "${DBSVC_DIR}/dbsvc_scripts/svc_functions"
+
+load_language_file
+
+check_tool_requirements		    # sed, grep, awk, tr, tail, etc.
+
+# The following sets the following global variables:
+# * means that they are written out to the service script as well
+# *ACCOUNT (daemon, or user account)
+# *DBSVC_TYPE (Personal, Network, etc...)
+# *INPUTCMD (original cmd line sent to dbsvc)
+# *PIDFILE (full pathname to pidfile if requested, empty otherwise)
+# *ODINI (ODBCINI specification)
+# *PRIORITY (nice priority of service)
+# *RUNLEVEL (Specify run level for service upon start up)
+# *SERVICENAME (name of service being operated on)
+# *STARTUP (Manual|Automatic)
+# *SVC_IFACE (lsb|systemd)
+# ACTION (action to take)
+# DEP_SERVICES (echoed out in the Required-Start line)
+# LISTCMD (display creation command TRUE|FALSE)
+# AUTOYES (pre-confirm overwrite/delete 1|0)
+# QUIET (quiet mode 1|0)
+# SVC_DETAILS (when creating a service, the command line to be passed to the tool)
+# 
+# Note that the following are written out to the service script as well
+# *SVC_TOOL_CMDLINE
+# *SERVERNAME (if applicable)
+# *SQLANYDIR
+# *ODBCINI (exported)
+
+# load the list of service interfaces
+dbsvc_iface_init
+
+#load the list of service types
+svc_t_iface_init
+
+parse_cl_options "$@"
+
+dbsvc_iface_select "${SVC_IFACE:-default}" || output_usage_error "${ERR_INVALIDIFACE}"
+
+# make sure we have an action to run
+[ -z "$ACTION" ] && output_usage_error "${INF_NOACTION}"
+
+# get interface to tool based on DBSVC_TYPE, and initialize it
+svc_t_iface_select "${DBSVC_TYPE}"
+
+# call the appropriate function to do the work
+echobanner
+dbsvc_iface_exec "$ACTION"
+

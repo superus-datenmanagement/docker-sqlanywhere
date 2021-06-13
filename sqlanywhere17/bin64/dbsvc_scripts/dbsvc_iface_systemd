@@ -1,0 +1,274 @@
+#!/bin/sh 
+
+# Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+
+dbsvc_iface_available_systemd()
+###############################
+{
+    [ -d "/etc/systemd/system" ] && $(pgrep systemd >/dev/null) && [ -x "/bin/systemctl" ]
+}
+
+dbsvc_iface_priority_systemd()
+##############################
+{
+    echo 99
+}
+
+dbsvc_iface_init_systemd()
+##########################
+{
+    [ -z "$RUNLEVEL" ] && RUNLEVEL="multi-user.target"
+    SVCDIR=`pkg-config systemd --variable=systemdsystemunitdir`
+    if [ -z "$SVCDIR" ] || [ ! -w "$SVCDIR" ]; then
+	SVCDIR=/usr/local/lib/systemd/system 
+    fi
+    if [ ! -w "$SVCDIR" ]; then
+	SVCDIR=/usr/lib/systemd/system
+    fi
+    if [ ! -w "$SVCDIR" ]; then
+	SVCDIR=/lib/systemd/system
+    fi
+    SYSTEMCTL="systemctl --no-legend --no-pager -t service"
+    RM_BIN=$(/bin/which rm 2>/dev/null)
+    PREFIX="${SVCDIR}/${SVCNAME_PFX}"
+}
+
+_dbsvc_iface_svcname_systemd()
+##############################
+{
+    echo ${SVCNAME_PFX}$(escape "${SERVICENAME}")
+}
+
+_dbsvc_iface_filename_systemd()
+###############################
+{
+    echo ${PREFIX}$(escape "${SERVICENAME}").service
+}
+
+_dbsvc_iface_tmpfiles_systemd()
+###############################
+{
+    echo "/usr/lib/tmpfiles.d/$(_dbsvc_iface_svcname_systemd).conf"
+}
+
+dbsvc_iface_create_systemd()
+############################
+{
+    [ ! -w "${SVCDIR}" ] && output_fatal_error "${ERR_PERMMOD}"
+
+    # Warn if the tool is not found
+    svc_t_checkbinary
+
+    I=$(_dbsvc_iface_svcname_systemd)
+    SERVICEFILE=$(_dbsvc_iface_filename_systemd)
+    TFILE=$(_dbsvc_iface_tmpfiles_systemd)
+
+    # give a hook for the tools to modify their cmdline at creation time
+    # (eg. for SA, add -ud if not there)
+    svc_t_process_cmdline SVC_TOOL_CMDLINE "${SVC_DETAILS[@]}"  ## from svc_t_<tool> script above
+    local QUOTED_CMDLINE=$(to_shell_string "${SVC_TOOL_CMDLINE[@]}")
+    local QUOTED_INPUTCMD=$(to_shell_string "${INPUTCMD[@]}")
+    
+    local DISPLAY_TYPE="${DBSVC_TYPE}"
+    [ -n "${PRIORITY:-}" ] && NICE="Nice=$(expr ${PRIORITY##+} + 0)"
+    exists svc_t_displayname && DISPLAY_TYPE=$(svc_t_displayname)
+
+    if exists svc_t_has_pid_switch && svc_t_has_pid_switch; then
+        EXEC_START="$(escape_path "$(svc_t_toolspath)") ${QUOTED_CMDLINE}"
+    else
+        EXEC_START="$(escape_path "${SQLANYDIR}/${BIN}s/dbsvc") RUNSERVICECMD start"
+    fi
+
+    if _dbsvc_iface_exists_systemd; then
+	if not cui_ask_y_n "${PRMPT_OVERWRITE}" "N" ; then
+	    exit 0
+	fi
+        dbsvc_iface_delete_systemd -f
+    fi
+
+    output_msg ${INF_CREATING} # $SERVICENAME $SERVICEFILE
+
+    rm -f "${SERVICEFILE}"
+    rm -f "${TFILE}"
+
+    cat <<EOF >"${TFILE}"
+d $(dirname "${PIDFILEN}") 0700 ${ACCOUNT}
+EOF
+
+    cat <<EOF >"${SERVICEFILE}"
+[Unit]
+Description=SQLAnywhere ${DISPLAY_TYPE} $SERVICENAME service
+After=syslog.target network.target local-fs.target
+
+[Service]
+Type=forking
+${NICE:-}
+User=$ACCOUNT
+PIDFile=$PIDFILEN
+Environment="TMP=$(escape_path "/tmp/.SQLAnywhere")"
+Environment="ODBCINI=$(escape_path  "$ODINI")"
+Environment="PIDFILE=$(escape_path "$PIDFILEN")"
+Environment="SERVICENAME=${SERVICENAME}"
+EOF
+
+    if not exists svc_t_has_pid_switch || not svc_t_has_pid_switch; then
+        cat <<EOF  >>"${SERVICEFILE}"
+Environment="SVC_IFACE=$SVC_IFACE"
+Environment="SQLANYDIR=$(escape_path "$SQLANYDIR")"
+Environment="BIN=$(escape_path "$BIN")"
+Environment="BITNESS=$BITNESS"
+Environment="DBSVC_TYPE=$(escape_path "$DBSVC_TYPE")"
+Environment="SVC_TOOL_CMDLINE=${QUOTED_CMDLINE}"
+ExecStartPre=-$RM_BIN -f "$(escape_path "$PIDFILEN")"
+ExecStopPost=$RM_BIN -f "$(escape_path "$PIDFILEN")"
+EOF
+    fi
+
+
+
+    cat <<EOF  >>"${SERVICEFILE}"
+ExecStart=$EXEC_START
+
+# INPUTCMD=dbsvc ${QUOTED_INPUTCMD}
+EOF
+
+    if [ "$STARTUP" = "Automatic" ]; then
+        cat <<EOF  >>"${SERVICEFILE}"
+[Install]
+WantedBy=${RUNLEVEL}
+EOF
+
+        dbsvc_iface_exec enable
+    fi
+
+    systemd-tmpfiles --create "${TFILE}"
+}
+
+dbsvc_iface_disable_systemd()
+#############################
+{
+    [ ! -w "${SVCDIR}" ] && output_fatal_error "${ERR_PERMMOD}"
+
+    I=$(_dbsvc_iface_svcname_systemd)
+    ${SYSTEMCTL} reset-failed "${I}"
+    ${SYSTEMCTL} disable "${I}"
+}
+
+_dbsvc_iface_exists_systemd()
+#############################
+{
+    I=$(_dbsvc_iface_svcname_systemd)
+    ISTHERE=$(${SYSTEMCTL} list-unit-files | grep -F "${I}")
+    ISLOADED=$(${SYSTEMCTL} list-units | grep -F "${I}")
+    
+    [ -n "${ISTHERE:-}" ] || [ -n "${ISLOADED:-}" ]
+}
+
+dbsvc_iface_delete_systemd()
+############################
+{
+    [ ! -w "${SVCDIR}" ] && output_fatal_error "${ERR_PERMMOD}"
+    local force=${1:-}
+
+    I=$(_dbsvc_iface_svcname_systemd)
+    IFILE=$(_dbsvc_iface_filename_systemd)
+    TFILE=$(_dbsvc_iface_tmpfiles_systemd)
+
+    ${SYSTEMCTL} -q reset-failed "${I}" >/dev/null 2>&1
+
+    if _dbsvc_iface_exists_systemd; then
+        if [ "${force:-}" != "-f" ] && not cui_ask_y_n "${PRMPT_DELETE}" "N" ; then
+	    exit 0
+        fi
+
+        local SYSCTL="${SYSTEMCTL}"
+        SYSTEMCTL="${SYSTEMCTL} -q"
+        ( ( [ "$(dbsvc_iface_exec is-enabled)" != "enabled" ] || dbsvc_iface_exec disable ) && \
+            ( not dbsvc_iface_exec is-active || dbsvc_iface_exec stop ) && \
+            systemd-tmpfiles --remove "${TFILE}" && \
+            _dbsvc_iface_exists_systemd && rm -f "${IFILE}" && rm -f "${TFILE}" && ${SYSTEMCTL} daemon-reload
+        )
+        SYSTEMCTL="${SYSCTL}"
+    else
+	output_msg "${INF_NOSERVICENAME}" # $SERVICENAME
+    fi
+    
+    not _dbsvc_iface_exists_systemd || output_msg "${ERR_NODELETE}"
+}
+
+dbsvc_iface_detail_systemd()
+############################
+{
+    IFILE=$(_dbsvc_iface_filename_systemd)
+
+    if [ -r "$IFILE" ]; then
+	cat "$IFILE"
+    else
+	output_msg "${INF_NOSERVICENAME}" # $SERVICENAME
+    fi
+}
+
+dbsvc_iface_list_systemd()
+##########################
+{
+    local UNITS=( $(${SYSTEMCTL} list-units | grep -e "^${SVCNAME_PFX}" | sed "s/^${SVCNAME_PFX}\(.*\)\.service.*/\1/" ) )
+    local FILES=( $(${SYSTEMCTL} list-unit-files | grep -e "^${SVCNAME_PFX}" | sed "s/^${SVCNAME_PFX}\(.*\)\.service.*/\1/") )
+    printf '%s\n' "$(unescape "${UNITS[@]}")" "$(unescape "${FILES[@]}")" | grep -v '^$' | sort | uniq
+}
+
+dbsvc_iface_exec_systemd()
+##########################
+{
+    local EXEC_ACTION="${1}"
+    I=$(_dbsvc_iface_svcname_systemd)
+
+    if [ -n "${SVC_TOOL_CMDLINE:-}" ] && exists _dbsvc_iface_${EXEC_ACTION}_systemd; then
+        _dbsvc_iface_${EXEC_ACTION}_systemd
+    else
+        ${SYSTEMCTL} "${EXEC_ACTION}" "${I}"
+    fi
+}
+
+#
+# Implementation of start that creates a pidfile for us
+#
+
+_dbsvc_iface_start_systemd()
+############################
+{
+    local status=$(svc_t_status)
+
+    if [ $status -eq 0 ]; then 
+	echo "${INF_ALREADYRUNNING}" >&2
+	exit 0
+    fi
+
+    eval "'$(svc_t_toolspath)'" ${SVC_TOOL_CMDLINE}
+
+    # Check if we really started; in some cases the tool will be successfully launched,
+    # but an error will occur on startup.  On RedHat, "runuser" swallows the return
+    # code in this case.  Work around this my checking status after starting.
+    # This also help customers who have inadvertently given an incorrect command line,
+    # since when starting the service they will not see any error messages in the 
+    # terminal.
+    local retcode=$?
+    status=$(svc_t_status)
+    [ $status -ne 0 ] && retcode=$status
+
+    if [ $retcode -eq 0 ]; then
+	if [ "$PIDFILEN" != "" ]; then
+	    mkdir -p $(dirname "${PIDFILEN}")
+	    # record the pid of the process that we just started
+	    svc_t_getpid >"${PIDFILEN}" 2>/dev/null
+	fi
+	return 0
+    else
+	if [ "$PIDFILEN" != "" ]; then
+	    # if there was a pid file, get rid of it
+	    if [ -f "$PIDFILEN" ]; then
+		rm -f $PIDFILEN 2>/dev/null
+	    fi
+	fi
+	return 1
+    fi
+} # start

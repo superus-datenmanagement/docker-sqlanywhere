@@ -1,0 +1,51 @@
+# ***************************************************************************
+# (c) 2019 SAP SE 或其关联公司版权所有。保留所有权利。
+# ***************************************************************************
+SQL Anywhere 服务实用程序 $(get_full_version)
+用法: dbsvc [选项] -d <svc>             删除服务
+   或  dbsvc [选项] -g <svc>                  获取服务的详细信息
+   或  dbsvc [选项] -x <svc>                  停止服务
+   或  dbsvc [选项] -u <svc>                  启动服务
+   或  dbsvc [选项] -status <svc>             获取服务的状态
+   或  dbsvc [选项] -l                        列出所有 SQL Anywhere 服务
+   或  dbsvc [选项] -lt                       列出所有 SQL Anywhere 服务类型
+   或  dbsvc [选项] -li                       列出所有服务接口
+   或  dbsvc [选项] [创建选项] -w <svc> <详细信息>
+                                            创建服务
+
+选项
+	-cm		显示服务创建命令(使用 -g 或 -l)
+        -q              不打印标题
+        -y              不进行确认即删除或覆盖服务
+        -i <interface>  要使用的初始接口(systemd 如果可用则为缺省，
+                        否则为 lsb)
+                        $(display_list -a 24 SVC_IFACE_LIST[@])
+创建选项
+        -a <acct>       要使用的帐户名
+        -as             使用守护程序帐户
+        -pr <level>     使用精确级别
+        -rs <deps>      服务的依赖项
+	-od <ODBCINI>   将以下 ODBCINI 文件用于 MobiLink、
+			DBMLSync 和 DBRemote 服务
+        -s <startup>    启动选项(缺省为手动)
+                        自动、手动
+        -rl <RUNLEVEL>  服务的 RUNLEVEL (lsb 缺省为 235，
+                        systemd 缺省为 multi-user.target)
+        -t <type>       服务的类型(缺省为 Personal)
+                        $(display_list -a 24 SVC_T_DISPLAY[@])
+
+详细信息:可执行选项
+	可执行选项是适用于服务类型的参数。
+	 如果未提供可执行选项，将使用当前环境。
+	 下面是 Network 服务的一个示例
+
+	 dbsvc -as -t Network -w my_svc /opt/sqlanywhere$(get_major_version)/demo.db -n foo
+
+         如使用 -w，则要求使用 -a 或 -as。
+
+注意:	 MobiLink、DBRemote 和 DBMLsync 需要使用 -o 或 -ot 选项
+	 才能作为服务运行
+
+         需要通过用户的主目录或 -od 选项为 MobiLink 服务设置
+         ODBC 环境
+

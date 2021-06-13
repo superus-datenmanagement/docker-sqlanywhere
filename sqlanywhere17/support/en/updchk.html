@@ -1,0 +1,53 @@
+<HTML>
+  <HEAD>
+    <TITLE>Update Service</TITLE>
+    <META HTTP-EQUIV="Pragma" content="no-cache">
+    <META HTTP-EQUIV="Content-Type" content="text/html">
+    <SCRIPT language="JavaScript">
+        function handleError() {
+            alert("A connection to the Update Service cannot be established at this time.  Your connection to the Internet may be disabled or the Update Service may not be available right now.  Please try again later.");
+        }
+        function checkForUpdate() {
+            if( document.testImage.complete ) {
+               document.forms[0].submit();
+            }
+        }
+        window.onerror=handleError;
+        window.onload=checkForUpdate;
+    </SCRIPT>
+  </HEAD>
+  <BODY BGCOLOR="ffffff">
+    <TABLE border="0" width="100%" bgcolor="#330065" cellspacing="2" cellpadding="2">
+      <TR>
+      <TD width="200"><A HREF="http://sqlasupport.sap.com"></A></TD>
+      <P>
+      <TD><FONT FACE="arial, helvetica, geneva", SIZE="+2" color="#FFFFFF"><B>
+        Update Service
+      </B></FONT></TD>
+      </TR>
+    </TABLE>
+    <FORM method="post" action="http://sqlasupport.sap.com/update_checker/updateservice" id="frmcheck">
+	<INPUT type="hidden" name="vendor1" value="iAnywhere">
+	<INPUT type="hidden" name="p1" value="SA:DB">
+	<INPUT type="hidden" name="v1" value="17.0.10.6127">
+	<INPUT type="hidden" name="os1" value="LINUX_X64">
+	<INPUT type="hidden" name="vendor2" value="iAnywhere">
+	<INPUT type="hidden" name="p2" value="SA:CL">
+	<INPUT type="hidden" name="v2" value="17.0.10.6127">
+	<INPUT type="hidden" name="os2" value="LINUX_X64">
+	<INPUT type="hidden" name="vendor3" value="iAnywhere">
+	<INPUT type="hidden" name="p3" value="SA:EC">
+	<INPUT type="hidden" name="v3" value="17.0.10.6127">
+	<INPUT type="hidden" name="os3" value="LINUX_X64">
+	<FONT FACE="arial, helvetica, geneva", SIZE="-1">
+	    <INPUT type="submit" value="Check for updates">
+        </FONT>
+    </FORM>
+    <HR>
+    <FONT FACE="arial, helvetica, geneva", SIZE="-2">
+        Copyright &copy; 2015 SAP SE or an SAP affiliate company. All rights reserved.
+    </FONT>
+    <IMG name="testImage" src="http://sqlasupport.sap.com/update_checker/images/dot.gif" width=1 height=1 onerror="alert('A connection to the Update Service cannot be established at this time.  Your connection to the Internet may be disabled or the Update Service may not be available right now.  Please try again later.')">
+  </BODY>
+</HTML>
+<html><body></body></html>

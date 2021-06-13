@@ -1,0 +1,50 @@
+# ***************************************************************************
+# Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+# ***************************************************************************
+SQL Anywhere Service Utility $(get_full_version)
+Usage: dbsvc [options] -d <svc>             delete a service
+   or  dbsvc [options] -g <svc>             get details of a service
+   or  dbsvc [options] -x <svc>             stop service
+   or  dbsvc [options] -u <svc>             start service
+   or  dbsvc [options] -status <svc>        get status of service
+   or  dbsvc [options] -l                   list all SQL Anywhere services
+   or  dbsvc [options] -lt                  list all SQL Anywhere service types
+   or  dbsvc [options] -li                  list all service interfaces
+   or  dbsvc [options] [creation options] -w <svc> <Details>
+                                            create service
+
+Options
+	-cm		display service creation command (with -g or -l)
+        -q              do not print banner
+        -y              delete or overwrite service without confirmation
+        -i <interface>  init interface to use (default systemd if available,
+                        otherwise lsb)
+                        $(display_list -a 24 SVC_IFACE_LIST[@])
+Creation options
+        -a <acct>       account name to use
+        -as             use daemon account
+        -pr <level>     use nice level 
+        -rs <deps>      service dependencies
+	-od <ODBCINI>   use the following ODBCINI file for MobiLink, 
+			DBMLSync and DBRemote services
+        -s <startup>    startup option (default Manual)
+                        Automatic, Manual
+        -rl <RUNLEVEL>  RUNLEVEL of Service (default 235 for lsb,
+                        multi-user.target for systemd)
+        -t <type>       type of service (default Personal)
+                        $(display_list -a 24 SVC_T_DISPLAY[@])
+
+Details: executable-options
+	 executable-options are arguments applicable to type of service.  
+	 If no executable is provided, current environment will be used.
+	 The following is an example of Network service
+
+	 dbsvc -as -t Network -w my_svc /opt/sqlanywhere$(get_major_version)/demo.db -n foo
+
+         One of -a and -as is required if -w is used.
+
+Notes:	 MobiLink, DBRemote and DBMLsync require -o or -ot option 
+	 to run as a service
+
+         ODBC Environment needs to be set up for MobiLink Services via user's 
+         home directory or -od option 

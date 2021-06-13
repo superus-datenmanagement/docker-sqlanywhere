@@ -1,0 +1,51 @@
+# ***************************************************************************
+# Copyright (c) 2019 SAP SE oder ein SAP-Konzernunternehmen. Alle Rechte vorbehalten.
+# ***************************************************************************
+SQL Anywhere-Dienstprogramm für Dienste $(get_full_version)
+Syntax: dbsvc [Optionen] -d <Dienst>             Dienst löschen
+   oder  dbsvc [Optionen] -g <Dienst>                  Details eines Dienstes abrufen
+   oder  dbsvc [Optionen] -x <Dienst>                  Dienst stoppen
+   oder  dbsvc [Optionen] -u <Dienst>                  Dienst starten
+   oder  dbsvc [Optionen] -status <Dienst>             Status des Dienstes abrufen
+   oder  dbsvc [Optionen] -l                        Alle SQL Anywhere-Dienste auflisten
+   oder  dbsvc [Optionen] -lt                       Alle SQL Anywhere-Diensttypen auflisten
+   oder  dbsvc [Optionen] -li                       Alle Dienstschnittstellen auflisten
+   oder  dbsvc [Optionen] [Erstellungsoptionen] -w <Dienst> <Details>
+                                            Dienst erstellen
+
+Optionen
+	-cm		Diensterstellungsbefehl anzeigen (mit -g oder -l)
+        -q              Banner nicht drucken
+        -y              Dienst ohne Bestätigung löschen oder überschreiben
+        -i <Schnittstelle>  Zu verwendende  init-Schnittstelle (standardmäßig
+                        systemd, sofern verfügbar, andernfalls lsb)
+                        $(display_list -a 24 SVC_IFACE_LIST[@])
+Erstellungsoptionen
+        -a <Konto>       Zu verwendender Kontoname
+        -as             Daemon-Konto verwenden
+        -pr <Stufe>     Benutzerfreundliche Stufe verwenden
+        -rs <Abhängigkeiten>      Dienstabhängigkeiten
+	-od <ODBCINI>   Folgende ODBCINI-Datei für MobiLink-,
+			DBMLSync- und DBRemote-Dienste verwenden
+        -s <Startup>    Startoption (Standard = Manual)
+                        Automatic, Manual
+        -rl <RUNLEVEL>  RUNLEVEL des Dienstes (Standardwert 235 für lsb,
+                        multi-user.target für systemd)
+        -t <Typ>       Diensttyp (Standard = Personal)
+                        $(display_list -a 24 SVC_T_DISPLAY[@])
+
+Details: Programmdateioptionen
+	 Programmdateioptionen sind Argumente, die für Diensttyp verwendet werden können.
+	 Wenn keine Programmdatei angegeben ist, wird die aktuelle Umgebung verwendet.
+	 Im Folgenden sehen Sie ein Beispiel eines Netzwerkdienstes:
+
+	 dbsvc -as -t Netzwerk -w my_svc /opt/sqlanywhere$(get_major_version)/demo.db -n foo
+
+         Wenn -w verwendet wird, ist -a oder -as erforderlich.
+
+Hinweise:	 Option -o oder -ot ist erforderlich, wenn MobiLink, DBRemote oder DBMLsync
+	 als Dienst ausgeführt werden sollen.
+
+         ODBC-Umgebung muss für MobiLink-Dienste über das Benutzer-
+         Ausgangsverzeichnis oder Parameter -od eingerichtet werden
+

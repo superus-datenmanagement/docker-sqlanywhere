@@ -1,0 +1,536 @@
+#!/bin/sh
+
+# Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved.
+
+dbsvc_iface_available_lsb()
+###########################
+{
+    [ -r "/lib/lsb/init-functions" ]
+}
+
+dbsvc_iface_priority_lsb()
+##########################
+{
+    echo 999
+}
+
+dbsvc_iface_select_lsb()
+########################
+{
+    # override selection to choose the "rh" flavour on redhat distros
+    if is_redhat || is_redflag ; then
+        SVC_IFACE="rh"
+    fi
+}
+
+dbsvc_iface_init_lsb()
+######################
+{
+    dbsvc_iface_available_lsb || output_fatal_error "${ERR_EXPECTINGFILES}"
+
+    # Pull in the LSB init functions
+    . /lib/lsb/init-functions
+
+    [ -z "$RUNLEVEL" ] && RUNLEVEL="235"
+    SVCDIR=/etc/init.d
+    PREFIX="${SVCDIR}/${SVCNAME_PFX}"
+
+    # Check whether we have chkconfig or update-rc.d for installing services
+    HAS_CHKCONFIG=0
+    HAS_UPDATE_RC=0
+
+    CHKCONFIG_BIN=/sbin/chkconfig
+    if [ -r $CHKCONFIG_BIN ]; then
+	HAS_CHKCONFIG=1
+    else
+	# Try PATH
+	CHKCONFIG_BIN=$(/bin/which chkconfig 2>/dev/null)
+	if [ -n $CHKCONFIG_BIN ] && [ -r "$CHKCONFIG_BIN" ]; then
+	    HAS_CHKCONFIG=1
+	else
+	    CHKCONFIG_BIN=""
+	fi
+    fi
+    UPDATE_RC_BIN=/usr/sbin/update-rc.d
+    if [ -r "$UPDATE_RC_BIN" ]; then
+	HAS_UPDATE_RC=1
+    else
+	# Try PATH
+	UPDATE_RC_BIN=$(/bin/which update-rc.d 2>/dev/null)
+	if [ -n $UPDATE_RC_BIN ] && [ -r "$UPDATE_RC_BIN" ]; then
+	    HAS_UPDATE_RC=1
+	else
+	    UPDATE_RC_BIN=""
+	fi
+    fi
+
+    START_DAEMON=start_daemon
+
+    LOG_SUCCESS_MSG=log_success_msg
+    LOG_FAILURE_MSG=log_failure_msg
+    LOG_WARNING_MSG=log_warning_msg
+}
+
+_dbsvc_iface_svcname_lsb()
+##########################
+{
+    echo ${SVCNAME_PFX}$(escape "${SERVICENAME}")
+}
+
+_dbsvc_iface_filename_lsb()
+###########################
+{
+    echo ${PREFIX}$(escape "${SERVICENAME}")
+}
+
+_dbsvc_iface_echoconfiginfo_lsb() 
+#################################
+{
+    I=$(_dbsvc_iface_filename_lsb)
+
+    [ "$STARTUP" != "Automatic" ] && RUNLEVEL=
+
+    local RUNLEVELS=$(echo $RUNLEVEL | sed 's/[0-9]/& /g')
+    local STOPLEVELS=$(echo $RUNLEVELS , 0 1 2 3 4 5 6 | sed 's@ @\n@g' | sort | uniq -u | sed 's@,@S@')
+    STOPLEVELS=$(echo $STOPLEVELS)
+    local SYS_DEP_SERVICES='$local_fs $network'
+    if is_redhat; then
+	SYS_DEP_SERVICES="$SYS_DEP_SERVICES NetworkManager"
+    fi
+    local SVC_DEP_SERVICES=$(printf '%s ' $SYS_DEP_SERVICES ${DEP_SERVICES[@]}  | tr ' ' '\n' | sort -u | tr '\n' ' ')
+
+    local DISPLAY_TYPE="${DBSVC_TYPE}"
+    exists svc_t_displayname && DISPLAY_TYPE=$(svc_t_displayname)
+
+    local PROVIDES="SQLAnywhere_${DISPLAY_TYPE}_$(escape $SERVICENAME)"
+    local DESCRIPTION="Start/Stop $PROVIDES service"
+    
+    cat <<EOF >"$I"
+#!/bin/bash
+
+# In case we are being run from another service, set some stock paths
+    
+PATH="/bin:/sbin:/usr/bin:/usr/sbin:/opt/usr/bin:/opt/usr/sbin:/usr/local/bin:/usr/local/sbin"
+#
+# ${CPYRIGHT1}
+# ${CPYRIGHT2}
+# ${CPYRIGHT3}
+#
+EOF
+
+    if [ ${HAS_CHKCONFIG:-0} -ne 0 ]; then
+        cat <<EOF >>"$I"
+# $PROVIDES	    $DESCRIPTION" >>
+#
+# chkconfig: $RUNLEVEL 20 80
+EOF
+    fi
+
+    cat <<EOF >>"$I"
+### BEGIN INIT INFO
+# Provides:       $PROVIDES
+# Required-Start: $SVC_DEP_SERVICES
+# Required-Stop:  $SVC_DEP_SERVICES
+# Default-Start:  $RUNLEVELS
+# Default-Stop:   $STOPLEVELS
+# Description:    $DESCRIPTION
+### END INIT INFO
+
+# Source function library.
+. "/lib/lsb/init-functions"
+EOF
+
+    chmod u+x "$I"
+
+    [ "$STARTUP" = "Automatic" ] && dbsvc_iface_exec enable
+}
+
+dbsvc_iface_create_lsb() 
+########################
+{
+    [ ! -w "${SVCDIR}" ] && output_fatal_error "${ERR_PERMMOD}"
+
+    # Warn if the tool is not found
+    svc_t_checkbinary
+
+    SERVICEFILE=$(_dbsvc_iface_filename_lsb)
+
+    # give a hook for the tools to modify their cmdline at creation time
+    # (eg. for SA, add -ud if not there)
+    svc_t_process_cmdline SVC_TOOL_CMDLINE "${SVC_DETAILS[@]}"  ## from svc_t_<tool> script above
+    local QUOTED_CMDLINE=$(to_shell_string "${SVC_TOOL_CMDLINE[@]}")
+    local QUOTED_INPUTCMD=$(to_shell_string "${INPUTCMD[@]}")
+
+    if _dbsvc_iface_exists_lsb; then
+	if not cui_ask_y_n "${PRMPT_OVERWRITE}" "N" ; then
+	    exit 0
+	fi
+        dbsvc_iface_delete_lsb -f
+    fi
+
+    output_msg ${INF_CREATING} # $SERVICENAME $SERVICEFILE
+
+    rm -f "${SERVICEFILE}"
+
+    # write service header
+    _dbsvc_iface_echoconfiginfo_lsb
+
+cat <<EOF >>"${SERVICEFILE}"
+
+#
+# Set up SQL Anywhere environment (PATH, LIBPATH, etc.)
+#
+. "$SQLANYDIR/$BIN/sa_config.sh" >/dev/null 2>&1
+
+#
+# Set up script variables
+#
+unset SATMP
+[ -z "\${TMP}" ] && TMP=/tmp/.SQLAnywhere
+ACCOUNT="${ACCOUNT}"
+BIN="${BIN}"
+BITNESS="${BITNESS}"
+DBSVC_TYPE="${DBSVC_TYPE}"
+INPUTCMD="dbsvc ${QUOTED_INPUTCMD}"
+PIDFILE="${PIDFILEN}"
+PRIORITY="${PRIORITY}"
+RUNLEVEL="${RUNLEVEL}"
+SERVICENAME="${SERVICENAME}"
+SQLANYDIR="${SQLANYDIR}"
+STARTUP="${STARTUP}"
+SVC_IFACE="${SVC_IFACE}"
+SVC_TOOL_CMDLINE="${QUOTED_CMDLINE}"
+ODBCINI="${ODINI}"
+
+export ODBCINI
+
+#
+# get implementation of start/stop/status/restart from dbsvc
+#
+
+. "$SQLANYDIR/$BIN/dbsvc" RUNSERVICECMD "\${@}"
+EOF
+
+    chmod 755 "${SERVICEFILE}"
+}
+
+dbsvc_iface_enable_lsb()
+########################
+{
+    [ ! -w "${SVCDIR}" ] && output_fatal_error "${ERR_PERMMOD}"
+
+    I=$(_dbsvc_iface_svcname_lsb)
+
+    if [ ${HAS_CHKCONFIG:-0} -ne 0 ]; then
+	$CHKCONFIG_BIN --add "$I" > /dev/null 2>&1
+	$CHKCONFIG_BIN --level "$RUNLEVEL" "$I" on > /dev/null 2>&1
+    elif [ ${HAS_UPDATE_RC:-0} -ne 0 ]; then
+	$UPDATE_RC_BIN "$I" start 60 $RUNLEVELS . stop 80 $STOPLEVELS .
+    fi
+}
+
+
+dbsvc_iface_disable_lsb()
+#########################
+{
+    [ ! -w "${SVCDIR}" ] && output_fatal_error "${ERR_PERMMOD}"
+
+    I=$(_dbsvc_iface_svcname_lsb)
+
+    if [ ${HAS_CHKCONFIG:-0} -ne 0 ]; then
+	"$CHKCONFIG_BIN" "$I" off > /dev/null 2>&1
+	"$CHKCONFIG_BIN" --del "$I" > /dev/null 2>&1
+    elif [ ${HAS_UPDATE_RC:-0} -ne 0 ]; then
+	"$UPDATE_RC_BIN" -f "$I" remove
+    fi
+}
+
+_dbsvc_iface_exists_lsb()
+#########################
+{
+    if [ ${HAS_CHKCONFIG:-0} -ne 0 ]; then
+        ISENABLED=$($CHKCONFIG_BIN --list 2>/dev/null | grep "$(_dbsvc_iface_svcname_lsb)")
+    fi
+
+    [ -r "$(_dbsvc_iface_filename_lsb)" ] || [ -n "${ISENABLED:-}" ]
+}
+
+dbsvc_iface_delete_lsb()
+########################
+{
+    [ ! -w "${SVCDIR}" ] && output_fatal_error "${ERR_PERMMOD}"
+    local force="${1:-}"
+
+    if _dbsvc_iface_exists_lsb; then
+	if [ "${force:-}" != "-f" ] && not cui_ask_y_n "${PRMPT_DELETE}" "N" ; then
+	    exit 0
+	fi
+
+	dbsvc_iface_exec disable >/dev/null 2>/dev/null
+
+        if [ "$(svc_t_status)" -eq 0 ]; then 
+	    dbsvc_iface_exec stop >/dev/null 2>/dev/null
+        fi
+
+	rm -f "$(_dbsvc_iface_filename_lsb)"
+    else
+	output_msg "${INF_NOSERVICENAME}" # $SERVICENAME
+    fi
+    
+    not _dbsvc_iface_exists_lsb || output_msg "${ERR_NODELETE}"
+}
+
+dbsvc_iface_detail_lsb()
+########################
+{
+    I="$(_dbsvc_iface_filename_lsb)"
+    local output
+    if [ -r "$I" ]; then
+	output=$(cat "$I" | grep = | grep -v TMP= | grep -v "internal use" | sort)
+	if [ "$LISTCMD" = "TRUE" ]; then
+	    output=$(echo "$output" | grep -v INPUTCMD=)
+	    output="$output"$'\n'$'\n'
+	    output="$output"$(cat "$I" | grep INPUTCMD)
+	fi
+	echo "$output"
+    else
+	output_msg "${INF_NOSERVICENAME}" # $SERVICENAME
+    fi
+}
+
+dbsvc_iface_list_lsb()
+######################
+{
+    SNAME=""
+    for j in "${PREFIX}"* ; do
+	SNAME=$(echo "$j" | awk -F "$PREFIX" '{ print $2 }')
+	unescape "${SNAME}"
+	if [ "$LISTCMD" = "TRUE" ]; then
+	    cat "$j" | grep INPUTCMD
+	fi
+    done
+    if [ "$SNAME" = "" ]; then 
+	output_msg "${INF_NOSERVICE}"
+    fi
+}
+
+dbsvc_iface_start_lsb()
+#######################
+{
+    I="$(_dbsvc_iface_filename_lsb)"  
+    if [ -n "${SVC_TOOL_CMDLINE:-}" ]; then
+        _dbsvc_iface_start_lsb
+    elif [ -r "$I" ]; then 
+	"$I" start
+    else 
+	output_msg "${INF_NOSERVICENAME}" # $SERVICENAME
+    fi
+}
+
+dbsvc_iface_stop_lsb()
+######################
+{
+    I="$(_dbsvc_iface_filename_lsb)"  
+    if [ -n "${SVC_TOOL_CMDLINE:-}" ]; then
+        _dbsvc_iface_stop_lsb
+    elif [ -r "$I" ]; then 
+	"$I" stop
+    else 
+	output_msg "${INF_NOSERVICENAME}" # $SERVICENAME
+    fi
+}
+
+dbsvc_iface_status_lsb()
+########################
+{
+    I="$(_dbsvc_iface_filename_lsb)"  
+    if [ -n "${SVC_TOOL_CMDLINE:-}" ]; then
+        _dbsvc_iface_status_lsb
+    elif [ -r "$I" ]; then 
+	"$I" status
+    else 
+	output_msg "${INF_NOSERVICENAME}" # $SERVICENAME
+    fi
+}
+
+dbsvc_iface_restart_lsb()
+#########################
+{
+    I="$(_dbsvc_iface_filename_lsb)"  
+    if [ -n "${SVC_TOOL_CMDLINE:-}" ]; then
+        _dbsvc_iface_restart_lsb
+    elif [ -r "$I" ]; then 
+	"$I" restart
+    else 
+	output_msg "${INF_NOSERVICENAME}" # $SERVICENAME
+    fi
+}
+
+dbsvc_iface_exec_lsb()
+######################
+{
+    local EXEC_ACTION="${1}"
+    if exists dbsvc_iface_${EXEC_ACTION}_lsb; then
+        dbsvc_iface_${EXEC_ACTION}_lsb
+    else
+        output_fatal_error "${ERR_UNKNOWNACTION}"
+    fi
+}
+
+#
+# Implementation of start, stop, status, restart
+#
+
+_dbsvc_iface_start_lsb_get_command()
+####################################
+{
+    local output="${1:-COMMAND}"
+    local cmd="`shell_quote \"$(svc_t_toolspath)\"` ${SVC_TOOL_CMDLINE}"
+
+    local sd_cmd="${START_DAEMON}"
+    local pr_num="${PRIORITY##[-+]}"
+    local pr_sign="${PRIORITY%%[0-9]*}"
+
+    [ -z $pr_sign ] && pr_sign="+"
+
+    PRIORITY="${pr_sign}${pr_num}"
+
+    if [ -x "/etc/redhat-lsb/lsb_start_daemon" ] && grep '\-u' "/etc/redhat-lsb/lsb_start_daemon" >/dev/null 2>&1; then
+        # bug in lsb_start_daemon on RH5 prevents us from using this tool
+        sd_cmd="/etc/redhat-lsb/lsb_start_daemon"
+        [ $(eval expr "$pr_num + 0") != 0 ] && sd_cmd="${sd_cmd} -n ${PRIORITY}"
+        [ "$ACCOUNT" != "root" ] && sd_cmd="${sd_cmd} -u ${ACCOUNT}"
+        eval ${output}=\"\${sd_cmd} ${cmd}\"
+        return
+    fi
+
+    if [ -x "/etc/asianux-lsb/lsb_start_daemon" ]; then
+        sd_cmd="/etc/asianux-lsb/lsb_start_daemon"
+        [ $(eval expr "$pr_num + 0") != 0 ] && sd_cmd="${sd_cmd} -n ${PRIORITY}"
+        [ "$ACCOUNT" != "root" ] && sd_cmd="${sd_cmd} -u ${ACCOUNT}"
+        eval ${output}=\"\${sd_cmd} ${cmd}\"
+        return
+    fi
+
+    if [ -x "/sbin/start-stop-daemon" ] && "/sbin/start-stop-daemon" --help 2>&1 | grep '\-c' >/dev/null 2>&1; then
+        sd_cmd="/sbin/start-stop-daemon --start --quiet --oknodo"
+        [ $(eval expr "$pr_num + 0") != 0 ] && sd_cmd="${sd_cmd} -N ${PRIORITY}"
+        [ "$ACCOUNT" != "root" ] && sd_cmd="${sd_cmd} -c ${ACCOUNT}"
+        eval ${output}=\"eval \${sd_cmd} --exec $(shell_quote "$(svc_t_toolspath)") -- ${SVC_TOOL_CMDLINE}\"
+        return
+    fi
+
+    if [ -x "/sbin/start_daemon" ]; then
+        sd_cmd="/sbin/start_daemon"
+        [ $(eval expr "$pr_num + 0") != 0 ] && sd_cmd="${sd_cmd} -n ${PRIORITY}"
+        [ "$ACCOUNT" != "root" ] && sd_cmd="${sd_cmd} -u ${ACCOUNT}"
+        eval ${output}=\"eval \${sd_cmd} ${cmd}\"
+        return
+    fi
+
+    # if all else fails, use "su"
+    sd_cmd="su -p"
+    [ $(eval expr "$pr_num + 0") != 0 ] && sd_cmd="nice -n $PRIORITY ${sd_cmd}"
+    sd_cmd="${sd_cmd} ${ACCOUNT}"
+    eval ${output}=\"eval \${sd_cmd} -c \\\"${cmd}\\\"\"
+}
+
+_dbsvc_iface_start_lsb()
+########################
+{
+    local status=$(svc_t_status)
+
+    if [ $status -eq 0 ]; then 
+	$LOG_WARNING_MSG "${INF_ALREADYRUNNING}"
+	exit 0
+    fi
+
+    _dbsvc_iface_start_lsb_get_command COMMAND
+
+    echo "${INF_STARTING}"
+
+    export ODBCINI
+
+    ${COMMAND}
+
+    # Check if we really started; in some cases the tool will be successfully launched,
+    # but an error will occur on startup.  On RedHat, "runuser" swallows the return
+    # code in this case.  Work around this my checking status after starting.
+    # This also help customers who have inadvertently given an incorrect command line,
+    # since when starting the service they will not see any error messages in the 
+    # terminal.
+    local retcode=$?
+    status=$(svc_t_status)
+    [ $status -ne 0 ] && retcode=$status
+
+    if [ $retcode -eq 0 ]; then
+	$LOG_SUCCESS_MSG
+	if [ "$PIDFILEN" != "" ]; then
+            local dir=$(dirname "$PIDFILEN" ; echo x) ; dir=${dir%??}
+            mkdir -p "$dir"
+	    # record the pid of the process that we just started
+	    svc_t_getpid >"$PIDFILEN" 2>/dev/null
+	fi
+	return 0
+    else
+	$LOG_FAILURE_MSG
+	if [ "$PIDFILEN" != "" ]; then
+	    # if there was a pid file, get rid of it
+	    if [ -f "$PIDFILEN" ]; then
+		rm -f "$PIDFILEN" 2>/dev/null
+	    fi
+	fi
+	return 1
+    fi
+} # start
+
+_dbsvc_iface_stop_lsb()
+#######################
+{
+    local status=$(svc_t_status)
+
+    if [ $status -ne 0 ]; then 
+	$LOG_WARNING_MSG "${INF_NOTRUNNING}"
+	exit 0
+    fi
+    echo "${INF_STOPPING}"
+    if [ "$PIDFILEN" != "" ]; then
+	# if there was a pid file, get rid of it
+	if [ -f "$PIDFILEN" ]; then
+	    rm -f "$PIDFILEN" 2>/dev/null
+	fi
+    fi
+    svc_t_stopcmd
+    if [ $? -eq 0 ]; then
+	$LOG_SUCCESS_MSG
+	return 0
+    else
+	$LOG_FAILURE_MSG
+	return 1
+    fi
+} # stop
+
+_dbsvc_iface_status_lsb()
+#########################
+{
+    local status=$(svc_t_status)
+
+    if [ $status -ne 0 ]; then 
+	$LOG_WARNING_MSG "${INF_CHECKING_NF}"
+	if [ "$PIDFILEN" != "" ]; then
+	    # if there was a pid file, get rid of it
+	    if [ -f "$PIDFILEN" ]; then
+		rm -f "$PIDFILEN" 2>/dev/null
+	    fi
+	fi
+    else
+	$LOG_SUCCESS_MSG "${INF_CHECKING_OK}"
+    fi
+    return $status
+} # sa_status
+
+_dbsvc_iface_restart_lsb()
+##########################
+{
+    _dbsvc_iface_stop_lsb && sleep 5 && _dbsvc_iface_start_lsb
+}
