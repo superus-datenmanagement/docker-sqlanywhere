@@ -1,2 +1,3 @@
 #!/bin/bash
-dbsrv17 "${DB_FILE}" -n "${DB_NAME}"
+SERVER_NAME="${DB_NAME}_17_${RANDOM}${RANDOM}"
+dbsrv17 -n "${SERVER_NAME}" "${DB_FILE}" -n "${DB_NAME}"
